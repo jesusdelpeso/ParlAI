@@ -16,7 +16,7 @@ from parlai.utils.io import PathManager
 
 
 try:
-    from transformers import GPT2Tokenizer, T5TokenizerFast
+    from transformers import GPT2Tokenizer, T5TokenizerFast, MT5TokenizerFast
 except ImportError:
     raise ImportError(
         "Need to install Hugging Face transformers repository. "
@@ -245,3 +245,36 @@ class T5DictionaryAgent(HuggingFaceDictionaryAgent):
         self.start_idx = self[self.start_token]
         self.end_idx = self[self.end_token]
         self.null_idx = self[self.null_token]
+
+
+class MT5DictionaryAgent(HuggingFaceDictionaryAgent):
+    def get_tokenizer(self, opt):
+        return MT5TokenizerFast.from_pretrained(opt['mt5_model_arch'], truncation=True)
+
+    @property
+    def add_special_tokens(self) -> bool:
+        """
+        Whether to add special tokens when tokenizing.
+        """
+        return True
+
+    @property
+    def skip_decode_special_tokens(self) -> bool:
+        """
+        Whether to add special tokens when tokenizing.
+        """
+        return True
+
+    def override_special_tokens(self, opt):
+        # now override
+        self.start_token = self.hf_tokenizer.pad_token
+        self.end_token = self.hf_tokenizer.eos_token
+        self.null_token = self.hf_tokenizer.pad_token
+        self.unk_token = self.hf_tokenizer.unk_token
+
+        self._unk_token_idx = self.hf_tokenizer.unk_token_id
+
+        self.start_idx = self[self.start_token]
+        self.end_idx = self[self.end_token]
+        self.null_idx = self[self.null_token]
+

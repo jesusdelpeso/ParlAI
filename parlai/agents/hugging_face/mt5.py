@@ -16,9 +16,11 @@ from transformers import MT5ForConditionalGeneration
 #except ModuleNotFoundError:
 #    # Prior versions of transformers package do not have T5Stack
 #    T5Stack = object
+MT5Stack = object  # Check me!
+
 
 from parlai.agents.hugging_face.hugging_face import HF_VERSION
-from parlai.agents.hugging_face.dict import T5DictionaryAgent
+from parlai.agents.hugging_face.dict import MT5DictionaryAgent
 
 from parlai.core.opt import Opt
 from parlai.core.params import ParlaiParser
@@ -54,7 +56,7 @@ def set_device(func):
     def wrap(*args, **kwargs):
         self = args[0]
         # self.paralleled implies whether the model has been paralleled.
-        # it is set to the opposite of `opt['t5_model_parallel]`
+        # it is set to the opposite of `opt['mt5_model_parallel]`
         parallel = hasattr(self, 'paralleled') and not self.paralleled
         if torch.cuda.is_available() and parallel:
             torch.cuda.set_device('cuda:0')
@@ -211,7 +213,7 @@ class MT5Agent(TorchGeneratorAgent):
 
 
 class ParlaiMT5Encoder(torch.nn.Module):
-    def __init__(self, opt: Opt, encoder: T5Stack, padding_idx: Optional[int] = None):
+    def __init__(self, opt: Opt, encoder: MT5Stack, padding_idx: Optional[int] = None):
         super().__init__()
         self.stack = encoder
         self.padding_idx = padding_idx
@@ -299,7 +301,7 @@ class ParlaiMT5Model(TorchGeneratorModel):
         self.mt5 = build_mt5(opt)
         self.encoder = ParlaiMT5Encoder(opt, self.mt5.get_encoder(), self.pad_idx)
         self.decoder = ParlaiMT5Decoder(opt, self.mt5.get_decoder(), self.pad_idx)
-        self.paralleled = not opt['t5_model_parallel']
+        self.paralleled = not opt['mt5_model_parallel']
 
     @set_device
     def _get_initial_forced_decoder_input(self, bsz: int, inputs: torch.LongTensor):
