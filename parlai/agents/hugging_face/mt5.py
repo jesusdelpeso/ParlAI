@@ -68,7 +68,7 @@ def set_device(func):
     return wrap
 
 
-class MT5Agent(TorchGeneratorAgent):
+class Mt5Agent(TorchGeneratorAgent):
     """
     MT5 Agent.
 
@@ -84,8 +84,8 @@ class MT5Agent(TorchGeneratorAgent):
         group.add_argument(
             '--mt5-model-arch',
             type=str,
-            default='mt5-base',
-            choices=["mt5-small", "mt5-base", "mt5-large", "mt5-3b", "mt5-11b"],
+            default='google/mt5-base',
+            choices=["google/mt5-small", "google/mt5-base", "google/mt5-large", "google/mt5-xl", "google/mt5-xxl"]
         )
         group.add_argument(
             '--mt5-model-parallel',
@@ -137,16 +137,17 @@ class MT5Agent(TorchGeneratorAgent):
         return TorchAgent.vectorize(self, *args, **kwargs)
 
     def observe(self, observation):
-        """
-        Override to include prefix, if necessary.
-        """
-        if self.opt['mt5_generation_config'] is not None and 'text' in observation:
-            config = TASK_CONFIGS[self.opt['mt5_generation_config']]
-            try:
-                observation.force_set('text', config['prefix'] + observation['text'])
-            except AttributeError:
-                observation['text'] = config['prefix'] + observation['text']
-
+#        """
+#        Override to include prefix, if necessary.
+#        """
+#        if self.opt['mt5_generation_config'] is not None and 'text' in observation:
+#            config = TASK_CONFIGS[self.opt['mt5_generation_config']]
+#            try:
+#                observation.force_set('text', config['prefix'] + observation['text'])
+#            except AttributeError:
+#                observation['text'] = config['prefix'] + observation['text']
+#
+#        return super().observe(observation)
         return super().observe(observation)
 
     def _generate(
@@ -192,10 +193,10 @@ class MT5Agent(TorchGeneratorAgent):
             'decoder_start_token_id': self.NULL_IDX,
         }
 
-        if self.opt['mt5_generation_config']:
-            config = TASK_CONFIGS[self.opt['mt5_generation_config']]
-            config.pop('prefix', None)
-            generation_params.update(config)
+#        if self.opt['mt5_generation_config']:
+#            config = TASK_CONFIGS[self.opt['mt5_generation_config']]
+#            config.pop('prefix', None)
+#            generation_params.update(config)
         if overrides:
             generation_params.update(overrides)
 
@@ -352,39 +353,3 @@ class ParlaiMT5Model(TorchGeneratorModel):
         tensor = tensor * (self.mt5.model_dim**-0.5)
         lm_logits = self.mt5.lm_head(tensor)
         return lm_logits
-
-
-############################################################################
-# Task-specific generation configs for MT5.                                #
-# Taken from HF: https://huggingface.co/mt5-small/resolve/main/config.json #
-############################################################################
-
-TASK_CONFIGS = {
-    "summarization": {
-        "early_stopping": True,
-        "length_penalty": 2.0,
-        "max_length": 200,
-        "min_length": 30,
-        "no_repeat_ngram_size": 3,
-        "num_beams": 4,
-        "prefix": "summarize: ",
-    },
-    "translation_en_to_de": {
-        "early_stopping": True,
-        "max_length": 300,
-        "num_beams": 4,
-        "prefix": "translate English to German: ",
-    },
-    "translation_en_to_fr": {
-        "early_stopping": True,
-        "max_length": 300,
-        "num_beams": 4,
-        "prefix": "translate English to French: ",
-    },
-    "translation_en_to_ro": {
-        "early_stopping": True,
-        "max_length": 300,
-        "num_beams": 4,
-        "prefix": "translate English to Romanian: ",
-    },
-}

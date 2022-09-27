@@ -249,7 +249,11 @@ class T5DictionaryAgent(HuggingFaceDictionaryAgent):
 
 class MT5DictionaryAgent(HuggingFaceDictionaryAgent):
     def get_tokenizer(self, opt):
-        return MT5TokenizerFast.from_pretrained(opt['mt5_model_arch'], truncation=True)
+        res = MT5TokenizerFast.from_pretrained(opt['mt5_model_arch'], truncation=True)
+        res.model_max_length = 100000000
+#        res.max_len_sentences_pair = 100000000
+#        res.max_len_single_sentence = 100000000
+        return res
 
     @property
     def add_special_tokens(self) -> bool:
