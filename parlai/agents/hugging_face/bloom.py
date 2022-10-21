@@ -1,33 +1,31 @@
 #!/usr/bin/env python3
 
-# This code adapts the model PlanTL-GOB-ES/gpt2-base-bne in Hugging Face.
-
-from typing import Optional
-from parlai.core.params import ParlaiParser
-from parlai.core.opt import Opt
-import os
-
 import torch
-from parlai.agents.hugging_face.dict import Gpt2bDictionaryAgent
+from typing import Optional
+from parlai.agents.hugging_face.dict import BloomDictionaryAgent
+from parlai.core.opt import Opt
+from parlai.core.params import ParlaiParser
 from parlai.core.torch_generator_agent import TorchGeneratorAgent, TorchGeneratorModel
-from parlai.utils.io import PathManager
 from parlai.utils.misc import warn_once
 from parlai.utils.torch import IdentityLayer, padded_tensor
 
+
 try:
-    from transformers import GPT2Model
+    from transformers import BloomModel
 except ImportError:
-    raise ImportError("Please run `pip install transformers`.")
+    raise ImportError('Please run `pip install transformers`.')
+
+
+DEFAULT_MODEL_NAME = "bigscience/bloom-560m"
 
 
 ############################################
 ## Modules
 ############################################
 
-
-class GPT2Decoder(torch.nn.Module):
+class BloomDecoder(torch.nn.Module):
     """
-    GPT2 Decoder.
+    Bloom Decoder.
 
     This decoder is initialized with the pretrained model from Hugging Face.
     """
@@ -37,15 +35,16 @@ class GPT2Decoder(torch.nn.Module):
         self.transformer = self._init_from_pretrained(opt)
         # add special tokens
         if opt["add_special_tokens"]:
-            size_before = self.transformer.wte.weight.size(0)
+            size_before = self.transformer.word_embeddings.weight.size(0)
             self.transformer.resize_token_embeddings(len(dict.hf_tokenizer))
             with torch.no_grad():
                 # first reduce the random jitter of the initialization
-                self.transformer.wte.weight[size_before:] *= 0.1
-                # next center it on the endoftext token
-                self.transformer.wte.weight[
-                    size_before:
-                ] += self.transformer.wte.weight[size_before - 1].unsqueeze(0)
+                self.transformer.word_embeddings.weight[size_before:] *= 0.1
+#                # next center it on the endoftext token
+#                # Note: This supposes that the endoftext is the last token of the original set!  TODO check me!
+#                self.transformer.word_embeddings.weight[
+#                    size_before:
+#                ] += self.transformer.word_embeddings.weight[size_before - 1].unsqueeze(0)
 
         self.add_start_token = opt["add_start_token"]
         self.START_IDX = dict.start_idx
@@ -59,24 +58,8 @@ class GPT2Decoder(torch.nn.Module):
         if opt.get("model_name"):
             fle_key = opt["model_name"]
         else:
-            model_sz = opt["gpt2_size"]
-            if model_sz == "small":
-                model_key = "gpt2"
-            elif model_sz == "distilgpt2":
-                model_key = "distilgpt2"
-            else:
-                model_key = f"gpt2-{model_sz}"
-
-            # check if datapath has the files that hugging face code looks for
-            hf_dir = os.path.join(opt["datapath"], "hf", model_key)
-            if all(
-                PathManager.exists(os.path.join(hf_dir, file_name))
-                for file_name in ["pytorch_model.bin", "config.json"]
-            ):
-                fle_key = PathManager.get_local_path(hf_dir, recursive=True)
-            else:
-                fle_key = model_key
-        return GPT2Model.from_pretrained(fle_key)
+            fle_key = DEFAULT_MODEL_NAME
+        return BloomModel.from_pretrained(fle_key)
 
     def forward(self, input, encoder_state, incr_state=None):
         attention_mask = None
@@ -140,14 +123,9 @@ class GPT2Decoder(torch.nn.Module):
         return output, new_incr_state
 
 
-class HFGPT2Model(TorchGeneratorModel):
+class HFBloomModel(TorchGeneratorModel):
     """
-    Hugging Face GPT2 Model.
-
-    GPT2 is a multi-layer decoder-only Transformer. As such, the encoder
-    is simply an identity layer. The decoder is initialized with pretrained
-    weights from Hugging Face. Read more about this model here
-    <https://huggingface.co/transformers/model_doc/gpt2.html>.
+    Hugging Face Bloom Model.
     """
 
     def __init__(self, opt, dict):
@@ -159,13 +137,13 @@ class HFGPT2Model(TorchGeneratorModel):
         self.decoder = self._get_decoder(opt, dict)
         self.config = self.decoder.transformer.config
         self.lm_head = torch.nn.Linear(
-            self.config.n_embd, self.config.vocab_size, bias=False
+            self.decoder.transformer.embed_dim, self.config.vocab_size, bias=False
         )
-        self._tie_weights(self.lm_head, self.decoder.transformer.wte)
+        self._tie_weights(self.lm_head, self.decoder.transformer.word_embeddings)
         # add start token
 
     def _get_decoder(self, opt, dict):
-        return GPT2Decoder(opt, dict)
+        return BloomDecoder(opt, dict)
 
     def _tie_weights(self, output_embeddings, input_embeddings):
         output_embeddings.weight = input_embeddings.weight
@@ -184,17 +162,22 @@ class HFGPT2Model(TorchGeneratorModel):
         return self.lm_head(tensor)
 
     def reorder_decoder_incremental_state(self, incremental_state, inds):
-        new_incr_state = []
-        for layer_past in incremental_state:
-            if torch.is_tensor(layer_past):
-                new_incr_state.append(torch.index_select(layer_past, 1, inds))
-            else:
-                # newer versions of HF split up the intermediate outputs
-                assert isinstance(layer_past, tuple)
-                layer_past = torch.stack(layer_past, dim=0)
-                new_incr_state.append(torch.index_select(layer_past, 1, inds))
+#        new_incr_state = []
+#        for layer_past in incremental_state:
+#            if torch.is_tensor(layer_past):
+#                new_incr_state.append(torch.index_select(layer_past, 1, inds))
+#            else:
+#                assert isinstance(layer_past, tuple)
+#
+#                layer_past = torch.stack(layer_past, dim=0)
+#                new_incr_state.append(torch.index_select(layer_past, 1, inds))
+#
+#        return tuple(new_incr_state)
 
-        return tuple(new_incr_state)
+        # TODO Implement me!
+        # Implement this for better performance.
+
+        return None
 
     def decode_forced(self, encoder_states, ys):
         """
@@ -215,19 +198,25 @@ class HFGPT2Model(TorchGeneratorModel):
 ############################################
 
 
-class Gpt2bAgent(TorchGeneratorAgent):
+class BloomAgent(TorchGeneratorAgent):
     """
-    Hugging Face GPT2 Agent.
+    Hugging Face Bloom Agent.
 
-    GPT2 is a multi-layer decoder-only Transformer.
+    Bloom is a multi-layer decoder-only Transformer.
     The decoder is initialized with pretrained weights from Hugging Face.
     Read more about this model here
-    <https://huggingface.co/transformers/model_doc/gpt2.html>.
+    <https://huggingface.co/docs/transformers/model_doc/bloom>.
 
-    GPT2 comes in five sizes: distilgpt2, small, medium, large, XL. Use the
-    flag `--gpt2-size` to choose the size.
+    Bloom comes in six sizes. Use the --model-name parameter to select hte actual model to be used:
+      - bigscience/bloom-560m
+      - bigscience/bloom-1b1
+      - bigscience/bloom-1b7
+      - bigscience/bloom-3b
+      - bigscience/bloom-7b1
+      - bigscience/bloom (176B parameters)
+    Note: Any other Bloom compatible model can be used if specified in the --model-name parameter.
 
-    If you are finetuning the Gpt2 agent as a dialogue agent, be sure
+    If you are finetuning the Bloom agent as a dialogue agent, be sure
     to run `--add-special-tokens True`. To examine the performance of the
     agent out of the box, run with `--add-special-tokens False`, and make
     sure that the batch size is 1.
@@ -235,28 +224,21 @@ class Gpt2bAgent(TorchGeneratorAgent):
 
     @classmethod
     def add_cmdline_args(
-        cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
+            cls, parser: ParlaiParser, partial_opt: Optional[Opt] = None
     ) -> ParlaiParser:
-        agent = parser.add_argument_group("Gpt2 Args")
+        agent = parser.add_argument_group("Bloom Args")
         agent.add_argument(
-            "--model-name", type=str, default=None, help="Any GPT-2 model names."
+            "--model-name", type=str, default=None, help="Any Bloom model name."
         )
         agent.add_argument(
             "--tokenizer", type=str, default=None, help="Tokenizer to be used"
-        )
-        agent.add_argument(
-            "--gpt2-size",
-            type=str,
-            default="small",
-            choices=["small", "medium", "large", "xl", "distilgpt2"],
-            help="Which size model to initialize.",
         )
         agent.add_argument(
             "--add-special-tokens",
             type="bool",
             default=True,
             help="Add special tokens (like PAD, etc.). If False, "
-            "Can only use with batch size 1.",
+                 "Can only use with batch size 1.",
         )
         agent.add_argument(
             "--add-start-token",
@@ -265,8 +247,7 @@ class Gpt2bAgent(TorchGeneratorAgent):
             help="Add start tokens when finetuning.",
         )
         parser.set_defaults(
-#            text_truncate=768,
-            text_truncate=400,
+            text_truncate=768,
             label_truncate=256,
             dict_maxexs=0,  # skip building dictionary
         )
@@ -309,13 +290,13 @@ class Gpt2bAgent(TorchGeneratorAgent):
 
         Can be overridden if a more complex dictionary is required.
         """
-        return Gpt2bDictionaryAgent
+        return BloomDictionaryAgent
 
     def build_model(self, states=None):
         """
         Build and return model.
         """
-        return HFGPT2Model(self.opt, self.dict)
+        return HFBloomModel(self.opt, self.dict)
 
     def _encoder_input(self, batch):
         return (batch.text_vec,)

@@ -16,7 +16,7 @@ from parlai.utils.io import PathManager
 
 
 try:
-    from transformers import GPT2Tokenizer, GPT2TokenizerFast, T5TokenizerFast, MT5TokenizerFast
+    from transformers import GPT2Tokenizer, GPT2TokenizerFast, T5TokenizerFast, MT5TokenizerFast, BloomTokenizerFast
 except ImportError:
     raise ImportError(
         "Need to install Hugging Face transformers repository. "
@@ -24,6 +24,8 @@ except ImportError:
     )
 
 SPECIAL_TOKENS = {"bos_token": "<bos>", "eos_token": "<eos>", "pad_token": "<pad>"}
+SPECIAL_TOKENS_GPT2B = {"bos_token": "<s>", "eos_token": "</s>", "pad_token": "<pad>"}
+BLOOM_DEFAULT_MODEL_NAME = "bigscience/bloom-560m"
 
 NO_OP = "x"
 
@@ -204,6 +206,7 @@ class Gpt2DictionaryAgent(HuggingFaceDictionaryAgent):
         self.ind2tok[self.start_idx] = self.start_token
         self.ind2tok[self.null_idx] = self.null_token
 
+
 class Gpt2bDictionaryAgent(HuggingFaceDictionaryAgent):
     @property
     def add_special_tokens(self) -> bool:
@@ -264,10 +267,10 @@ class Gpt2bDictionaryAgent(HuggingFaceDictionaryAgent):
     def _define_special_tokens(self, opt):
         if opt["add_special_tokens"]:
             # Add additional start/end/pad tokens
-            self.hf_tokenizer.add_special_tokens(SPECIAL_TOKENS)
-            self.start_token = SPECIAL_TOKENS["bos_token"]
-            self.end_token = SPECIAL_TOKENS["eos_token"]
-            self.null_token = SPECIAL_TOKENS["pad_token"]
+            self.hf_tokenizer.add_special_tokens(SPECIAL_TOKENS_GPT2B)
+            self.start_token = SPECIAL_TOKENS_GPT2B["bos_token"]
+            self.end_token = SPECIAL_TOKENS_GPT2B["eos_token"]
+            self.null_token = SPECIAL_TOKENS_GPT2B["pad_token"]
         else:
             # Only special token is end of text
             self.start_token = NO_OP  # hack, we cut off the start token
@@ -289,8 +292,6 @@ class Gpt2bDictionaryAgent(HuggingFaceDictionaryAgent):
         self.ind2tok[self.end_idx] = self.end_token
         self.ind2tok[self.start_idx] = self.start_token
         self.ind2tok[self.null_idx] = self.null_token
-
-
 
 
 class DialoGPTDictionaryAgent(Gpt2DictionaryAgent):
@@ -370,3 +371,150 @@ class MT5DictionaryAgent(HuggingFaceDictionaryAgent):
         self.end_idx = self[self.end_token]
         self.null_idx = self[self.null_token]
 
+
+class Gpt2DictionaryAgent(HuggingFaceDictionaryAgent):
+    @property
+    def add_special_tokens(self) -> bool:
+        """
+        Whether to add special tokens when tokenizing.
+        """
+        return True
+
+    @property
+    def skip_decode_special_tokens(self) -> bool:
+        """
+        Whether to skip special tokens when converting tokens to text.
+        """
+        return False
+
+    def get_tokenizer(self, opt):
+        """
+        Instantiate tokenizer.
+        """
+        if opt.get("model_name"):
+            fle_key = opt["model_name"]
+        else:
+            model_sz = opt["gpt2_size"]
+            if model_sz == "small":
+                model_key = "gpt2"
+            elif model_sz == "distilgpt2":
+                model_key = "distilgpt2"
+            else:
+                model_key = f"gpt2-{model_sz}"
+            # check if datapath has the files that hugging face code looks for
+            hf_dir = os.path.join(opt["datapath"], "hf", model_key)
+            if all(
+                PathManager.exists(os.path.join(hf_dir, file_name))
+                for file_name in ["merges.txt", "vocab.json"]
+            ):
+                fle_key = PathManager.get_local_path(hf_dir, recursive=True)
+
+            else:
+                fle_key = model_key
+        return GPT2Tokenizer.from_pretrained(fle_key)
+
+    def add_additional_special_tokens(self, additional_special_tokens: List[str]):
+        """
+        Add additional special tokens to the dictionary.
+        """
+        self.additional_special_tokens = additional_special_tokens
+        self.hf_tokenizer.add_special_tokens(
+            {'additional_special_tokens': additional_special_tokens}
+        )
+        for tok in self.additional_special_tokens:
+            self.add_token(tok)
+
+    def _define_special_tokens(self, opt):
+        if opt["add_special_tokens"]:
+            # Add additional start/end/pad tokens
+            self.hf_tokenizer.add_special_tokens(SPECIAL_TOKENS)
+            self.start_token = SPECIAL_TOKENS["bos_token"]
+            self.end_token = SPECIAL_TOKENS["eos_token"]
+            self.null_token = SPECIAL_TOKENS["pad_token"]
+        else:
+            # Only special token is end of text
+            self.start_token = NO_OP  # hack, we cut off the start token
+            self.end_token = "<|endoftext|>"
+            self.null_token = "<|endoftext|>"
+
+    def override_special_tokens(self, opt):
+        # define special tokens
+        self._define_special_tokens(opt)
+        # now override
+        self.start_idx = self.hf_tokenizer.convert_tokens_to_ids([self.start_token])[0]
+        self.end_idx = self.hf_tokenizer.convert_tokens_to_ids([self.end_token])[0]
+        self.null_idx = self.hf_tokenizer.convert_tokens_to_ids([self.null_token])[0]
+        # set tok2ind for special tokens
+        self.tok2ind[self.end_token] = self.end_idx
+        self.tok2ind[self.start_token] = self.start_idx
+        self.tok2ind[self.null_token] = self.null_idx
+        # set ind2tok for special tokens
+        self.ind2tok[self.end_idx] = self.end_token
+        self.ind2tok[self.start_idx] = self.start_token
+        self.ind2tok[self.null_idx] = self.null_token
+
+
+class BloomDictionaryAgent(HuggingFaceDictionaryAgent):
+    @property
+    def add_special_tokens(self) -> bool:
+        """
+        Whether to add special tokens when tokenizing.
+        """
+        return True
+
+    @property
+    def skip_decode_special_tokens(self) -> bool:
+        """
+        Whether to skip special tokens when converting tokens to text.
+        """
+        return False
+
+    def get_tokenizer(self, opt):
+        """
+        Instantiate tokenizer.
+        """
+        if opt.get("model_name"):
+            fle_key = opt["model_name"]
+        else:
+            fle_key = BLOOM_DEFAULT_MODEL_NAME
+        return BloomTokenizerFast.from_pretrained(fle_key)
+
+    def add_additional_special_tokens(self, additional_special_tokens: List[str]):
+        """
+        Add additional special tokens to the dictionary.
+        """
+        self.additional_special_tokens = additional_special_tokens
+        self.hf_tokenizer.add_special_tokens(
+            {'additional_special_tokens': additional_special_tokens}
+        )
+        for tok in self.additional_special_tokens:
+            self.add_token(tok)
+
+    def _define_special_tokens(self, opt):
+        if opt["add_special_tokens"]:
+            # Add additional start/end/pad tokens
+            self.hf_tokenizer.add_special_tokens(SPECIAL_TOKENS)
+            self.start_token = SPECIAL_TOKENS["bos_token"]
+            self.end_token = SPECIAL_TOKENS["eos_token"]
+            self.null_token = SPECIAL_TOKENS["pad_token"]
+        else:
+            # Only special token is end of text
+            self.start_token = NO_OP  # hack, we cut off the start token
+            self.end_token = "<|endoftext|>"
+            self.null_token = "<|endoftext|>"
+
+    def override_special_tokens(self, opt):
+        # define special tokens
+        self._define_special_tokens(opt)
+        # now override
+        self.start_idx = self.hf_tokenizer.convert_tokens_to_ids([self.start_token])[0]
+        self.end_idx = self.hf_tokenizer.convert_tokens_to_ids([self.end_token])[0]
+        self.null_idx = self.hf_tokenizer.convert_tokens_to_ids([self.null_token])[0]
+        # set tok2ind for special tokens
+        self.tok2ind[self.end_token] = self.end_idx
+        self.tok2ind[self.start_token] = self.start_idx
+        self.tok2ind[self.null_token] = self.null_idx
+        # set ind2tok for special tokens
+        self.ind2tok[self.end_idx] = self.end_token
+        self.ind2tok[self.start_idx] = self.start_token
+        self.ind2tok[self.null_idx] = self.null_token
