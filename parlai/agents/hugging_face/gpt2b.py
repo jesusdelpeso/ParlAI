@@ -267,7 +267,9 @@ class Gpt2bAgent(TorchGeneratorAgent):
         parser.set_defaults(
 #            text_truncate=768,
             text_truncate=400,
-            label_truncate=256,
+#            label_truncate=256,
+            label_truncate=90,
+            hisotry_size=5,
             dict_maxexs=0,  # skip building dictionary
         )
         super().add_cmdline_args(parser, partial_opt=partial_opt)
