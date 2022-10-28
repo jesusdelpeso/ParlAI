@@ -5,7 +5,8 @@ from typing import Optional
 from parlai.agents.hugging_face.dict import BloomDictionaryAgent
 from parlai.core.opt import Opt
 from parlai.core.params import ParlaiParser
-from parlai.core.torch_generator_agent import TorchGeneratorAgent, TorchGeneratorModel
+#from parlai.core.torch_generator_agent import TorchGeneratorAgent, TorchGeneratorModel
+from .bloom_torch_generator_agent import TorchGeneratorAgent, TorchGeneratorModel
 from parlai.utils.misc import warn_once
 from parlai.utils.torch import IdentityLayer, padded_tensor
 
@@ -62,6 +63,14 @@ class BloomDecoder(torch.nn.Module):
         return BloomModel.from_pretrained(fle_key)
 
     def forward(self, input, encoder_state, incr_state=None):
+        # Debug
+        tokenizer = StaticTokenizer.get_tokenizer()
+        decoded_inputs = [tokenizer.decode(i) for i in input]
+        decoded_encoder_states = [tokenizer.decode(i) for i in encoder_state]
+        print(f"input:\t{decoded_inputs}")
+        print(f"encoder_states:\t{decoded_encoder_states}")
+        # Debug
+
         attention_mask = None
         position_ids = None
         if incr_state is None:
@@ -83,8 +92,8 @@ class BloomDecoder(torch.nn.Module):
                 attention_mask.cumsum(dim=-1, dtype=torch.int64) - 1
             ).clamp_(min=0)
         else:
-            if not self.add_start_token:
-                input = input[:, 1:]
+#            if not self.add_start_token:
+#                input = input[:, 1:]
             # generating with continuation
             # get the position ids
             position_ids = (encoder_state != self.NULL_IDX).sum(
@@ -94,7 +103,8 @@ class BloomDecoder(torch.nn.Module):
             position_ids += delta
             # generation: get the last token input
             model_input = input[:, -1:]
-            attention_mask = torch.cat([encoder_state, input], dim=-1) != self.NULL_IDX
+#            attention_mask = torch.cat([encoder_state, input], dim=-1) != self.NULL_IDX
+            attention_mask = input != self.NULL_IDX
 
         model_input = model_input.clamp_(min=0)
         transformer_outputs = self.transformer(
@@ -176,8 +186,9 @@ class HFBloomModel(TorchGeneratorModel):
 
         # TODO Implement me!
         # Implement this for better performance.
-
+#        return incremental_state
         return None
+
 
     def decode_forced(self, encoder_states, ys):
         """
@@ -191,6 +202,27 @@ class HFBloomModel(TorchGeneratorModel):
         logits = self.output(latent)
         _, preds = logits.max(dim=2)
         return logits, preds
+
+    def _get_next_decoder_input(
+        self,
+        prev_input: torch.LongTensor,
+        selection: torch.LongTensor,
+        incr_state_inds: torch.LongTensor,
+    ) -> torch.LongTensor:
+        """
+        Return next decoder input.
+
+        :param prev_input:
+            previous input to decoder
+        :param selection:
+            token selections for current timestep
+        :param inds:
+            incremental state indices
+
+        :return decoder input:
+            return decoder input for next timestep
+        """
+        return selection
 
 
 ############################################
@@ -320,3 +352,21 @@ class BloomAgent(TorchGeneratorAgent):
             if 'masked_bias' in m:
                 state_dict[m] = current_sd[m]
         return super().load_state_dict(state_dict)
+
+
+# Debug
+
+from transformers import BloomTokenizerFast
+from .dict import BLOOM_DEFAULT_MODEL_NAME
+
+class StaticTokenizer(object):
+
+    tokenizer = None
+
+    @classmethod
+    def get_tokenizer(cls):
+        if cls.tokenizer is None:
+            cls.tokenizer = BloomTokenizerFast.from_pretrained(BLOOM_DEFAULT_MODEL_NAME)
+        return cls.tokenizer
+
+
