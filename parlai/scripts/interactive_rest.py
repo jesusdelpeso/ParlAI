@@ -22,6 +22,7 @@ import parlai.utils.logging as logging
 from parlai.utils.world_logging import WorldLogger
 
 import json
+from json import JSONDecodeError
 import os
 import time
 
@@ -234,44 +235,84 @@ class MyHandler(BaseHTTPRequestHandler):
         Handle POST request, especially replying to a chat message.
         """
         if self.path == '/interact':
-            content_length = int(self.headers['Content-Length'])
-            body = self.rfile.read(content_length)
-            decoded_body = json.loads(body.decode('utf-8'))
-            conversation_id = decoded_body.get("conversation_id", None)
-            text = decoded_body["text"]
-            print(f"*** Text: {text}")  # Debug
-            model_response = self._interactive_running(
-                SHARED.get('opt'), conversation_id, text
-            )
-            print(f"*** RESP: {model_response}")  # Debug
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            json_str = json.dumps(model_response.json_safe_payload())
-            self.wfile.write(bytes(json_str, 'utf-8'))
+            try:
+                content_length = int(self.headers['Content-Length'])
+                body = self.rfile.read(content_length)
+                decoded_body = json.loads(body.decode('utf-8'))
+                conversation_id = decoded_body["conversation_id"]
+                text = decoded_body["text"]
+                print(f"*** Text: {text}")  # Debug
+                model_response = self._interactive_running(
+                    SHARED.get('opt'), conversation_id, text
+                )
+                print(f"*** RESP: {model_response}")  # Debug
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                json_str = json.dumps(model_response.json_safe_payload())
+                self.wfile.write(bytes(json_str, 'utf-8'))
+            except KeyError as ke:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(bytes(json.dumps({'status': 400, 'error': 'Missing field: ' + str(ke)}), 'utf-8'))
+            except JSONDecodeError as je:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(bytes(json.dumps({'status': 400, 'error': 'Malformed JSON. ' + str(je)}), 'utf-8'))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(bytes(json.dumps({'status': 500, 'error': str(e)}), 'utf-8'))
         elif self.path == '/reset':
-            content_length = int(self.headers['Content-Length'])
-            body = self.rfile.read(content_length)
-            decoded_body = json.loads(body.decode('utf-8'))
-            conversation_id = decoded_body.get("conversation_id", None)
+            try:
+                content_length = int(self.headers['Content-Length'])
+                body = self.rfile.read(content_length)
+                decoded_body = json.loads(body.decode('utf-8'))
+                conversation_id = decoded_body["conversation_id"]
 
-            # Save conversation to logs
-            if SHARED["opt"]["outdir"]:
-                out_file = self._get_out_file(SHARED["opt"]["outdir"], conversation_id)
-                save_format = SHARED["opt"]["save_format"]
-                logging.info("Saving conversation to {} in {} format.".format(out_file, save_format))
-                self._save_conversation(conversation_id, out_file, save_format)
+                if conversation_id not in SHARED["active_conversations"]:
+                    self.send_response(400)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(bytes(json.dumps({'status': 400,
+                                                       'error': 'Wrong conversation_id: {}'.format(conversation_id)}),
+                                           'utf-8'))
+                else:
+                    # Save conversation to logs
+                    if SHARED["opt"]["outdir"]:
+                        out_file = self._get_out_file(SHARED["opt"]["outdir"], conversation_id)
+                        save_format = SHARED["opt"]["save_format"]
+                        logging.info("Saving conversation to {} in {} format.".format(out_file, save_format))
+                        self._save_conversation(conversation_id, out_file, save_format)
 
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            SHARED["active_conversations"][conversation_id]["agent"].reset()
-            del SHARED["active_conversations"][conversation_id]
-#            SHARED['agent'].reset()
-            self.wfile.write(bytes("{}", 'utf-8'))
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    SHARED["active_conversations"][conversation_id]["agent"].reset()
+                    del SHARED["active_conversations"][conversation_id]
+        #            SHARED['agent'].reset()
+                    self.wfile.write(bytes("{}", 'utf-8'))
+            except KeyError as ke:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(bytes(json.dumps({'status': 400, 'error': 'Missing field: ' + str(ke)}), 'utf-8'))
+            except JSONDecodeError as je:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(bytes(json.dumps({'status': 400, 'error': 'Malformed JSON. ' + str(je)}), 'utf-8'))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(bytes(json.dumps({'status': 500, 'error': str(e)}), 'utf-8'))
         else:
             self.send_response(500)
-            self.wfile.write(bytes(str({'status': 500}), 'utf-8'))
+            self.wfile.write(bytes(json.dumps({'status': 500}), 'utf-8'))
 
     def _get_out_file(self, out_dir, conversation_id):
         return os.path.join(out_dir, f"{conversation_id}_{time.time_ns()}")
