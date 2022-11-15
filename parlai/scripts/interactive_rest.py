@@ -25,6 +25,7 @@ import json
 from json import JSONDecodeError
 import os
 import time
+import traceback
 
 from parlai.agents.local_human.local_human import LocalHumanAgent
 
@@ -262,6 +263,7 @@ class MyHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(bytes(json.dumps({'status': 400, 'error': 'Malformed JSON. ' + str(je)}), 'utf-8'))
             except Exception as e:
+                logging.error("Error: {}".format(traceback.format_exc()))
                 self.send_response(500)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
@@ -306,6 +308,7 @@ class MyHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(bytes(json.dumps({'status': 400, 'error': 'Malformed JSON. ' + str(je)}), 'utf-8'))
             except Exception as e:
+                logging.error("Error: {}".format(traceback.format_exc()))
                 self.send_response(500)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
