@@ -183,10 +183,12 @@ class MyHandler(BaseHTTPRequestHandler):
     Handle HTTP requests.
     """
 
-    def _interactive_running(self, opt, conversation_id, reply_text):
+    def _interactive_running(self, opt, conversation_id, reply_text, params={}):
         # Manage conversation
+        _reply_text = reply_text
         active_conversations = SHARED["active_conversations"]
         if conversation_id not in active_conversations:
+            # First interaction.
             # Create new agent, world and world logger.
             _agent_clone = self._clone_agent(SHARED["agent"])
             active_conversations[conversation_id] = {
@@ -197,7 +199,12 @@ class MyHandler(BaseHTTPRequestHandler):
             world_logger = WorldLogger(SHARED["opt"])
             active_conversations[conversation_id]["world_logger"] = world_logger
 
-        reply = {'episode_done': False, 'text': reply_text}
+            # Check whether there is a conversation context
+            context = params.get("context", None)
+            if context:
+                _reply_text = context + "\n" + reply_text
+
+        reply = {'episode_done': False, 'text': _reply_text}
         active_conversations[conversation_id]["agent"].observe(reply)
         model_res = active_conversations[conversation_id]["agent"].act()
 
@@ -242,11 +249,12 @@ class MyHandler(BaseHTTPRequestHandler):
                 decoded_body = json.loads(body.decode('utf-8'))
                 conversation_id = decoded_body["conversation_id"]
                 text = decoded_body["text"]
-                print(f"*** Text: {text}")  # Debug
+                params = decoded_body.get("params", {})
+                logging.info(f"text: {text}, params: {params}")
                 model_response = self._interactive_running(
-                    SHARED.get('opt'), conversation_id, text
+                    SHARED.get('opt'), conversation_id, text, params=params
                 )
-                print(f"*** RESP: {model_response}")  # Debug
+                logging.info(f"{model_response}")
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
@@ -295,8 +303,64 @@ class MyHandler(BaseHTTPRequestHandler):
                     self.end_headers()
                     SHARED["active_conversations"][conversation_id]["agent"].reset()
                     del SHARED["active_conversations"][conversation_id]
-        #            SHARED['agent'].reset()
                     self.wfile.write(bytes("{}", 'utf-8'))
+            except KeyError as ke:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(bytes(json.dumps({'status': 400, 'error': 'Missing field: ' + str(ke)}), 'utf-8'))
+            except JSONDecodeError as je:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(bytes(json.dumps({'status': 400, 'error': 'Malformed JSON. ' + str(je)}), 'utf-8'))
+            except Exception as e:
+                logging.error("Error: {}".format(traceback.format_exc()))
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(bytes(json.dumps({'status': 500, 'error': str(e)}), 'utf-8'))
+        elif self.path == '/query' or self.path == 'api/llm/query':
+            try:
+                content_length = int(self.headers['Content-Length'])
+                body = self.rfile.read(content_length)
+                decoded_body = json.loads(body.decode('utf-8'))
+                conversation_id = decoded_body["sesid"]
+                text = decoded_body["input"]
+                reset = decoded_body["reset"]
+                params = decoded_body.get("params", {})
+                logging.info(f"text: {text}, params: {params}, reset: {reset}")
+
+                model_response = self._interactive_running(
+                    SHARED.get('opt'), conversation_id, text, params=params
+                )
+
+                # Save conversation to logs
+                if reset and SHARED["opt"]["outdir"]:
+                    out_file = self._get_out_file(SHARED["opt"]["outdir"], conversation_id)
+                    save_format = SHARED["opt"]["save_format"]
+                    logging.info("Saving conversation to {} in {} format.".format(out_file, save_format))
+                    self._save_conversation(conversation_id, out_file, save_format)
+                    SHARED["active_conversations"][conversation_id]["agent"].reset()
+                    del SHARED["active_conversations"][conversation_id]
+
+                logging.info(f"RESPONSE: {model_response}")
+
+                response_message = {
+                    "ok": True,
+                    "input": text,
+                    "output": model_response.get("text", ""),
+#                    "sequence": None, # TODO
+                    "params": params,
+                    "message": None,
+#                    "prompt": None  # TODO
+                }
+
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                json_str = json.dumps(response_message)
+                self.wfile.write(bytes(json_str, 'utf-8'))
             except KeyError as ke:
                 self.send_response(400)
                 self.send_header('Content-type', 'application/json')
